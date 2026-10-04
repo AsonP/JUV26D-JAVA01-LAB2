@@ -18,9 +18,8 @@ Kör `budgethanteraren.Main` från IntelliJ med VM-flaggan:
 Utan flaggan fungerar programmet, men loggningen faller tillbaka på JUL:s
 standard och skrivs till konsolen istället för till fil.
 
-Datafilen är `data/transaktioner.csv` och skapas automatiskt om den saknas.
-Loggfilen hamnar i `logs/budgethanteraren.log`; mappen `logs` måste finnas
-eftersom `FileHandler` inte skapar kataloger.
+Katalogerna `data/` och `logs/` finns i repot men är tomma. Datafilen
+`data/transaktioner.csv` skapas automatiskt vid första körningen.
 
 Tester körs med `mvn test` eller direkt i IntelliJ.
 
@@ -87,7 +86,7 @@ gränsdagarna i ett datumintervall.
 `CsvTransactionStoreTest` använder JUnits `@TempDir`, som ger varje testmetod en
 egen tom katalog. Det är möjligt eftersom `CsvTransactionStore` tar emot sin
 `Path` via konstruktorn — hade sökvägen varit hårdkodad i klassen hade testerna
-skrivit i det riktiga datakatalogen och stört varandra.
+skrivit i den riktiga datakatalogen och stört varandra.
 
 ### Mutationstestning
 
@@ -318,36 +317,43 @@ varje ändring", och här görs båda.
 
 ### `Repository<T>`
 
-Alternativen hade varit en `TransactionRepository` som lagrar `Transaction`
-direkt, eller — betydligt värre — en som lagrar `Object` och castar vid varje
-utplock.
+Ett alternativ hade varit att skapa en `TransactionRepository` som lagrar
+`Transaction` direkt. Ett annat, sämre, alternativ hade varit att skapa ett
+repository som lagrar `Object` och sedan castar objekten varje gång de hämtas.
 
-Den generiska varianten ger tre saker:
+Den generiska lösningen har flera fördelar.
 
-**Typsäkerhet vid kompilering.** `repository.add("en sträng")` på ett
-`Repository<Transaction>` går helt enkelt inte att kompilera. Med `Object` hade
-samma misstag upptäckts först vid körning, som en `ClassCastException` på en helt
-annan plats i koden än där felet begicks — alltså precis den sortens bugg som är
-dyrast att hitta.
+**Typsäkerhet vid kompilering.** Eftersom repositoryt är typat med `T` kan man
+till exempel inte lägga till en sträng i ett `Repository<Transaction>`. Felet
+upptäcks alltså redan vid kompilering istället för senare under körning. Om man
+hade använt `Object` hade en felaktig typ kunnat leda till en
+`ClassCastException` på en annan plats i programmet, vilket gör felet svårare
+att hitta.
 
-**Återanvändbarhet.** Klassen innehåller ingen rad som nämner `Transaction`. Den
-skulle utan en enda ändring kunna lagra böcker, användare eller vad som helst.
-Det är inte ett teoretiskt argument: samma mönster användes i en tidigare uppgift
-för en helt annan domän.
+**Återanvändbarhet.** `Repository<T>` är inte beroende av någon specifik
+domänklass. Klassen innehåller exempelvis ingen kod som är specifik för
+`Transaction`, vilket gör att samma repository kan användas för andra typer, som
+böcker eller användare, utan att klassen behöver ändras. Samma generella mönster
+kan därför återanvändas i andra delar av programmet eller i andra projekt.
 
-**Ett ställe att ändra på.** Defensiv kopiering, null-kontroll och loggning finns
-samlat. Hade varje domäntyp haft sitt eget repository hade logiken dubblerats,
-och varje rättning behövt göras flera gånger — med risk att en glöms.
+**Gemensam logik på ett ställe.** Funktioner som defensiv kopiering,
+null-kontroll och loggning hanteras på samma ställe. Om varje domäntyp hade haft
+ett eget repository hade samma logik behövt implementeras flera gånger. Det hade
+både gjort koden mer omfattande och ökat risken för att en ändring eller
+rättning bara genomförs på vissa ställen.
 
-Priset är att typinformationen försvinner vid körning, så kallad type erasure.
-Därför heter loggern `Repository.class` och inte `Repository<Transaction>.class`,
-och därför går det inte att skriva `instanceof Repository<Transaction>`. Det
-finns bara en `Repository`-klass i JVM:en oavsett hur många typer den används
-med. I det här programmet spelar det ingen roll, men det är värt att känna till.
+En nackdel med generics är däremot att typinformationen för `T` försvinner vid
+körning genom så kallad type erasure. Det är därför man exempelvis skriver
+`Repository.class` och inte `Repository<Transaction>.class`. På samma sätt går
+det inte att göra en kontroll som `instanceof Repository<Transaction>`. JVM har
+alltså bara en `Repository`-klass oavsett vilken typ som används som `T`. I just
+det här programmet har det ingen praktisk betydelse, men det är en viktig
+begränsning att känna till när man arbetar med generics i Java.
 
 ### Stream API
 
-För saldoberäkningen är skillnaden mot en loop liten:
+För den vanliga saldoberäkningen är skillnaden mellan Stream API och en vanlig
+loop egentligen ganska liten:
 
 ```java
 // Stream
@@ -363,7 +369,12 @@ for (Transaction t : repository.findAll()) {
 return total;
 ```
 
-Den blir tydlig i `sumPerCategory()`:
+Här gör båda varianterna i princip samma sak. Loopen är kanske till och med
+något lättare att läsa om man inte är van vid streams. Därför använder jag inte
+Stream API bara för att det är "modernare", utan framför allt när det gör själva
+operationen tydligare.
+
+Det blir mer intressant i `sumPerCategory()`:
 
 ```java
 return repository.findAll().stream()
@@ -373,30 +384,39 @@ return repository.findAll().stream()
                 Collectors.summingDouble(Transaction::signedAmount)));
 ```
 
-Loopversionen kräver en `Map`, en kontroll av om nyckeln redan finns, en
-initialisering av värdet och en uppdatering — plus en separat sortering om
-kategorierna ska visas i ordning. Fem till sex rader där varje rad är ett
-tillfälle att göra fel, särskilt den där ett nytt värde ska initieras till noll.
+Här skulle en loop behöva hålla reda på en `Map`, kontrollera om kategorin redan
+finns, skapa ett startvärde för en ny kategori och sedan uppdatera summan. Om
+resultatet dessutom ska vara sorterat behöver man ta hänsyn till det också. Det
+går absolut att skriva, men det blir mer kod och mer detaljer som jag själv
+behöver hålla reda på.
 
-Streamversionen säger *vad* som ska hända — gruppera på kategori, summera
-signerade belopp, håll nycklarna sorterade — istället för *hur* det ska gå till
-steg för steg.
+Stream-versionen beskriver istället resultatet ganska direkt: gruppera
+transaktionerna efter kategori, summera de signerade beloppen och använd en
+`TreeMap` så att kategorierna hålls sorterade. Jag tycker därför att den här
+typen av operation blir lättare att förstå när man läser koden uppifrån och ner.
 
-`Predicate<T>` i `findWhere` är den andra vinsten, och den hänger ihop med
-generics. Repositoryt behöver inte känna till ett enda filtreringsvillkor;
-anroparen skickar in sitt eget som en lambda:
+En annan fördel med Stream API i den här lösningen är användningen av
+`Predicate<T>` i `findWhere`. Repositoryt behöver inte veta vilka typer av
+sökningar som programmet kommer att behöva. Istället skickar den som använder
+repositoryt in själva villkoret:
 
 ```java
 repository.findWhere(t -> t.type() == type);
 repository.findWhere(t -> !t.date().isBefore(from) && !t.date().isAfter(to));
 ```
 
-Utan det hade `Repository` behövt en metod per filtreringsbehov, och därmed känt
-till `Transaction` — vilket hade förstört hela poängen med att den är generisk.
-De två mekanismerna förutsätter alltså varandra.
+Det gör repositoryt mer generellt. Det behöver inte ha separata metoder för
+exempelvis sökning på transaktionstyp, datumintervall eller någon framtida
+egenskap. All filtreringslogik kan skickas in från anroparen.
 
-**Avvägning värd att nämna:** streams är inte alltid tydligare. Den trerads
-`groupingBy` ovan tog längre tid att förstå första gången än motsvarande loop
-hade gjort. Vinsten ligger inte i att koden är lättare att läsa för en nybörjare,
-utan i att den är svårare att skriva *fel* när man väl kan läsa den — och i att
-avsikten framgår direkt istället för att behöva härledas ur en loop.
+Det här hänger också ihop med varför `Repository<T>` är generiskt. Om
+repositoryt hade haft särskilda metoder som `findByType()` eller
+`findBetweenDates()` hade det behövt känna till `Transaction` och dess
+egenskaper. Med `Predicate<T>` behöver repositoryt istället bara veta att det får
+ett villkor som kan testas mot ett objekt av typen `T`.
+
+På så sätt kompletterar generics och Stream API varandra ganska bra i den här
+lösningen. Generics gör repositoryt oberoende av vilken typ det lagrar, medan
+`Predicate<T>` gör det möjligt att även hålla filtreringen generell. Repositoryt
+ansvarar då för hur objekten lagras och hämtas, medan den som använder
+repositoryt bestämmer vad den vill hitta.
