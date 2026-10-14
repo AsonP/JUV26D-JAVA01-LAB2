@@ -96,10 +96,15 @@ public class Menu {
 
         if (perCategory.isEmpty()) {
             System.out.println("  (inga transaktioner)");
-            return;
+        } else {
+            perCategory.forEach((category, sum) ->
+                    System.out.printf("  %-20s %12.2f kr%n", category, sum));
         }
-        perCategory.forEach((category, sum) ->
-                System.out.printf("  %-20s %12.2f kr%n", category, sum));
+
+        service.latest().ifPresentOrElse(
+                t -> System.out.printf("%nSenaste transaktion: %s (%s)%n",
+                        t.date(), t.category()),
+                () -> System.out.println("\nIngen transaktion registrerad än."));
     }
 
     private void filterMenu() {

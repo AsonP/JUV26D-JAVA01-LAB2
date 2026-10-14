@@ -68,12 +68,91 @@ där anroparen måste ta ställning till vad som ska hända.
 
 ---
 
+## Nullhantering
+
+Strategin är att stoppa null vid systemets gränser, så att resten av koden
+slipper fundera på saken. Fyra mekanismer gör jobbet:
+
+**`Transaction` avvisar null i den kompakta konstruktorn.** Datum, kategori och
+typ kontrolleras innan fälten sätts. En `Transaction` med null i sig kan därmed
+inte existera — inte heller en som lästs in från fil.
+
+**`Repository.add` avvisar null.** Lagret kan inte innehålla null-element,
+vilket gör att varken strömmar eller loopar längre ner behöver kontrollera det.
+
+**Metoder som returnerar samlingar returnerar aldrig null.** `findAll()` ger en
+tom lista och `sumPerCategory()` en tom `Map` när det inte finns något att
+returnera. Det är därför `Menu.showSummary()` kan anropa `isEmpty()` direkt utan
+en null-kontroll först.
+
+**`Objects.requireNonNull` i konstruktorerna** för `Menu` och `BudgetService`.
+Ett felaktigt ihopkopplat `Main` ger då ett tydligt fel direkt vid start, i
+stället för ett `NullPointerException` flera menyval senare.
+
+### Optional
+
+`BudgetService.latest()` är den enda metod där "hittade inget" är ett normalt
+utfall snarare än ett fel, och den returnerar därför en `Optional`:
+
+```java
+public Optional<Transaction> latest() {
+    return repository.findAll().stream()
+            .max(Comparator.comparing(Transaction::date));
+}
+```
+
+`Stream.max()` returnerar redan en `Optional`, eftersom det inte finns något
+största värde i en tom ström. Anroparen tvingas sedan hantera båda fallen:
+
+```java
+service.latest().ifPresentOrElse(
+        t -> System.out.printf("%nSenaste transaktion: %s (%s)%n", t.date(), t.category()),
+        () -> System.out.println("\nIngen transaktion registrerad än."));
+```
+
+Poängen är att kompilatorn inte låter en glömma det tomma fallet. Hade metoden
+returnerat `Transaction` eller null hade en utelämnad kontroll gett ett
+`NullPointerException` först vid körning, och bara när budgeten råkade vara tom.
+
+`.get()` används inte någonstans — `orElse`, `orElseThrow` och `ifPresentOrElse`
+används i stället. Med `.get()` byter man bara ut ett `NullPointerException` mot
+ett `NoSuchElementException`.
+
+Optional används som returtyp, inte som fält eller parameter, vilket är den
+gängse rekommendationen.
+
+### Varför inte JSpecify
+
+JSpecify är en uppsättning annotationer — `@NullMarked`, `@Nullable`,
+`@NonNull` — som dokumenterar vad som får vara null. De är framtagna gemensamt
+av bland andra Google, JetBrains, Microsoft och Oracle för att ersätta de många
+inkompatibla `@Nullable`-varianter som tidigare funnits i olika bibliotek.
+
+De är medvetet bortvalda här, av två skäl.
+
+Annotationerna gör ingenting i sig — de är metadata. För att de ska ge verklig
+kontroll krävs ett statiskt analysverktyg som läser dem vid bygget, exempelvis
+NullAway tillsammans med ErrorProne. Att lägga till annotationerna utan
+verktyget hade gett en dokumentationseffekt men ingen faktisk säkerhet, och
+risken är att man litar på något som i praktiken inte kontrolleras.
+
+Nyttan skulle dessutom vara begränsad i ett program av den här storleken, där
+null redan stoppas vid gränserna och inga publika metoder returnerar null. I ett
+större kodbas, med flera utvecklare och bibliotek som anropar varandra, ser
+kalkylen annorlunda ut — där är det värt både beroendet och verktygskedjan.
+
+Den kvarvarande luckan är `sumPerCategory().get("Resa")`, som returnerar null om
+kategorin saknas. Det är `Map`-gränssnittets beteende och inget programmet
+utnyttjar, eftersom resultatet bara itereras med `forEach`.
+
+---
+
 ## Testning
 
 | Testklass | Tester | Täcker |
 |---|---|---|
 | `RepositoryTest` | 3 | Tillägg, null-hantering, defensiv kopiering |
-| `BudgetServiceTest` | 4 | Saldo, summering per kategori, filtrering |
+| `BudgetServiceTest` | 9 | Saldo, summering per kategori, filtrering, senaste transaktion |
 | `CsvTransactionStoreTest` | 4 | Round-trip, saknad fil, trasig rad, tomt fält |
 
 Alla följer Arrange-Act-Assert. Både normalfall och gränsfall testas: tom lista,
@@ -87,6 +166,9 @@ gränsdagarna i ett datumintervall.
 egen tom katalog. Det är möjligt eftersom `CsvTransactionStore` tar emot sin
 `Path` via konstruktorn — hade sökvägen varit hårdkodad i klassen hade testerna
 skrivit i den riktiga datakatalogen och stört varandra.
+
+I testet för `latest()` läggs transaktionerna medvetet till i oordning. Annars
+hade testet inte kunnat skilja "senaste datum" från "sist tillagd".
 
 ### Mutationstestning
 

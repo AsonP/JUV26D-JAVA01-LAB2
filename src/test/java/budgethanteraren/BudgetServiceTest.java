@@ -9,9 +9,9 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-
-
 class BudgetServiceTest {
+
+    // --- balance ----------------------------------------------------------
 
     @Test
     void balance_noTransactions_returnsZero() {
@@ -42,6 +42,8 @@ class BudgetServiceTest {
         // Assert
         assertEquals(29500.0, result, 0.0001);
     }
+
+    // --- sumPerCategory ---------------------------------------------------
 
     @Test
     void sumPerCategory_noTransactions_returnsEmptyMap() {
@@ -93,9 +95,9 @@ class BudgetServiceTest {
         // Assert
         assertEquals(1, result.size());
         assertEquals(0.0, result.get("Resa"), 0.0001);
-
-
     }
+
+    // --- Filtrering -------------------------------------------------------
 
     @Test
     void findByType_mixedTransactions_returnsOnlyMatchingType() {
@@ -115,8 +117,6 @@ class BudgetServiceTest {
         // Assert
         assertEquals(2, result.size());
         assertTrue(result.stream().allMatch(t -> t.type() == TransactionType.EXPENSE));
-
-
     }
 
     @Test
@@ -143,4 +143,36 @@ class BudgetServiceTest {
         assertEquals(3, result.size());
     }
 
+    // --- latest -----------------------------------------------------------
+
+    @Test
+    void latest_noTransactions_returnsEmptyOptional() {
+        // Arrange
+        Repository<Transaction> repository = new Repository<>();
+        BudgetService service = new BudgetService(repository);
+
+        // Act + Assert
+        assertTrue(service.latest().isEmpty());
+    }
+
+    @Test
+    void latest_multipleTransactions_returnsMostRecent() {
+        // Arrange — medvetet i oordning, annars kan testet inte skilja
+        // "senaste datum" från "sist tillagd"
+        Repository<Transaction> repository = new Repository<>();
+        repository.add(new Transaction(
+                LocalDate.of(2026, 9, 1), "Mat", 300.0, TransactionType.EXPENSE));
+        repository.add(new Transaction(
+                LocalDate.of(2026, 9, 20), "Lön", 30000.0, TransactionType.INCOME));
+        repository.add(new Transaction(
+                LocalDate.of(2026, 9, 10), "Hyra", 8000.0, TransactionType.EXPENSE));
+        BudgetService service = new BudgetService(repository);
+
+        // Act
+        Transaction result = service.latest().orElseThrow();
+
+        // Assert
+        assertEquals(LocalDate.of(2026, 9, 20), result.date());
+        assertEquals("Lön", result.category());
+    }
 }
